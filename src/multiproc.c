@@ -152,7 +152,7 @@ unsigned long mppipe_read(mppipe_r rd, void *buf, size_t count){
   //доступные данные расположены от хвоста до головы (а не до конца буфера)
   av_size2 = pipe->head - pipe->tail;
   //если предыдущее условие отработало, считать надо на av_size байт меньше, чем запрошено
-  buf += av_size;
+  (uint8_t*)buf += av_size;
   count -= av_size;
   //аналогично предыдущему - достаточно ли данных чтобы удовлетворить запрос полностью
   if(av_size2 >= count){
@@ -188,7 +188,7 @@ unsigned long mppipe_write(mppipe_w wr, void *buf, size_t count){
   
   av_size2 = pipe->tail - pipe->head - 1;
   count -= av_size;
-  buf += av_size;
+  (uint8_t*)buf += av_size;
   if(av_size2 >= count){
     memcpy( &pipe->buffer[pipe->head], buf, count );
     __sync_add_and_fetch( &pipe->head, count);
