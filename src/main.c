@@ -48,7 +48,7 @@ void* thread_func(void* arg){
   char tmp;
   memcpy(&f, arg, sizeof(struct file_io));
   
-  usleep(100 * 1000);
+  pusleep(100 * 1000);
   
   len = mppipe_read(f.pr, buf, 100);
   if(len > 0){
@@ -80,7 +80,7 @@ void test_thread(){
   len = mppipe_write(fm.pw, buf, strlen(buf));
   printf("write %i bytes (Main) = '%s'\n", len, buf);
   
-  usleep(1000 * 1000);
+  pusleep(1000 * 1000);
   
   memset(buf, 0, sizeof(buf));
   len = mppipe_read(fm.pr, buf, 100);
