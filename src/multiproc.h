@@ -18,13 +18,13 @@ extern "C" {
   //можно было использовать POSIX реализацию, но она тянет за собой libwinpthread-1.dll
   //зачем оно когда и родные Win32-потоки работают нормально
   typedef union {HANDLE thread;}mpthread_t;
-  #define MPPIPE_BYPASS
+  #define MPPIPE_SOFT
 #else
   #error architecture does not supported yet
 #endif
   typedef union {void *attr;}mpthread_arrt_t; //атрибуты при создании потока (не используется) //thread attributes (ignore yet)
   
-#ifdef MPPIPE_BYPASS
+#ifdef MPPIPE_SOFT
 /*читать - КОСТЫЛЬ. Ручное создание FIFO буфера и работа с ним
   это менее отлаженный вариант. Наверняка более медленный, зато, наверное, более переносимый
   Но в целом - если есть нормальные каналы (не тот ужас, что считается каналами в WinAPI) лучше использовать их
@@ -35,7 +35,7 @@ extern "C" {
   typedef union {int fd;}mppipe_w; //write descriptor of pipe
   typedef union {int fd;}mppipe_r; //read descriptor of pipe
 #else
-  #error normal pipes not supported for this architecture. Try to define MPPIPE_BYPASS
+  #error normal pipes not supported for this architecture. Try to define MPPIPE_SOFT
 #endif
   
 //получить количество ядер/процессоров
