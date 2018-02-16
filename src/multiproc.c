@@ -52,7 +52,7 @@ int mpthread_join(mpthread_t thread){
 
 #endif
 
-#ifdef MPPIPE_BYPASS
+#ifdef MPPIPE_SOFT
 /**********************************************************************************
  **********************************************************************************
  *   ANONYMOUS PIPES - program implementation
@@ -115,18 +115,20 @@ int mpthread_join(mpthread_t thread){
 struct sProgramPipe{
   uint8_t buffer[ BUF_SIZE ];
   fifo_t tail, head;
+  uint8_t flag_close;
 };
 
 char mppipe_create_anon(mppipe_w *wr, mppipe_r *rd){
   struct sProgramPipe *pipe = malloc(sizeof(struct sProgramPipe));
   if(pipe == NULL)return MTP_ERR;
-  pipe->tail = 0; pipe->head = 0;
+  pipe->tail = 0; pipe->head = 0; pipe->flag_close=0;
   wr->fifo = rd->fifo = (void*)pipe;
   return MTP_OK;
 }
 
 unsigned long mppipe_read(mppipe_r rd, void *buf, size_t count){
   struct sProgramPipe *pipe = (struct sProgramPipe*)rd.fifo;
+  uint8_t *buf8 = (uint8_t*)buf;
   fifo_t av_size=0, av_size2;
   if( pipe->head == pipe->tail )return 0; //буфер пуст - читать нечего, возвращаем 0
   
@@ -136,7 +138,7 @@ unsigned long mppipe_read(mppipe_r rd, void *buf, size_t count){
     av_size = BUF_SIZE - pipe->tail; //сколько всего байт до конца буфера
     if(av_size >= count){
       //запрошено меньше чем доступно - выдаем сколько хотят и выйдем
-      memcpy( buf, &pipe->buffer[pipe->tail], count);
+      memcpy( buf8, &pipe->buffer[pipe->tail], count);
       //это шаманство - атомарные операции с целыми числами. Оно замедляет работу, зато безопасно, быстрее и проще семафоров
       //по сути оно выполняет следующий код
       // tail += count;
@@ -145,22 +147,22 @@ unsigned long mppipe_read(mppipe_r rd, void *buf, size_t count){
       return count;
     }else{
       //запрошено больше чем було до конца буфера. Пока считаем сколько есть и пойдем проверять в начале
-      memcpy( buf, &pipe->buffer[pipe->tail], av_size);
+      memcpy( buf8, &pipe->buffer[pipe->tail], av_size);
       if(__sync_add_and_fetch( &pipe->tail, av_size) == BUF_SIZE)__sync_and_and_fetch( &pipe->tail, 0);
     }
   }
   //доступные данные расположены от хвоста до головы (а не до конца буфера)
   av_size2 = pipe->head - pipe->tail;
   //если предыдущее условие отработало, считать надо на av_size байт меньше, чем запрошено
-  (uint8_t*)buf += av_size;
+  buf8 += av_size;
   count -= av_size;
   //аналогично предыдущему - достаточно ли данных чтобы удовлетворить запрос полностью
   if(av_size2 >= count){
-    memcpy( buf, &pipe->buffer[pipe->tail], count);
+    memcpy( buf8, &pipe->buffer[pipe->tail], count);
     __sync_add_and_fetch( &pipe->tail, count);
     return count+av_size;
   }else{
-    memcpy( buf, &pipe->buffer[pipe->tail], av_size2);
+    memcpy( buf8, &pipe->buffer[pipe->tail], av_size2);
     __sync_add_and_fetch( &pipe->tail, av_size2);
     return av_size2+av_size;
   }
@@ -169,6 +171,7 @@ unsigned long mppipe_read(mppipe_r rd, void *buf, size_t count){
 unsigned long mppipe_write(mppipe_w wr, void *buf, size_t count){
   //тут аналогично чтению - особо комментировать не буду
   struct sProgramPipe *pipe = (struct sProgramPipe*)wr.fifo;
+  uint8_t *buf8 = (uint8_t*)buf;
   fifo_t av_size=0, av_size2;
   if( pipe->tail - pipe->head == 1)return 0; //буфер переполнен
   
@@ -176,11 +179,11 @@ unsigned long mppipe_write(mppipe_w wr, void *buf, size_t count){
     av_size = BUF_SIZE - pipe->head;
     if(pipe->tail == 0)av_size--; //если хвост оказался в начале массива, трогать последний элемент нельзя!
     if(av_size >= count){
-      memcpy( &pipe->buffer[pipe->head], buf, count );
+      memcpy( &pipe->buffer[pipe->head], buf8, count );
       if(__sync_add_and_fetch( &pipe->head, count) == BUF_SIZE)__sync_and_and_fetch( &pipe->head, 0);
       return count;
     }else{
-      memcpy( &pipe->buffer[pipe->head], buf, av_size );
+      memcpy( &pipe->buffer[pipe->head], buf8, av_size );
       if(__sync_add_and_fetch( &pipe->head, av_size) == BUF_SIZE)__sync_and_and_fetch( &pipe->head, 0);
     }
     if(pipe->tail == 0)return av_size;
@@ -188,13 +191,13 @@ unsigned long mppipe_write(mppipe_w wr, void *buf, size_t count){
   
   av_size2 = pipe->tail - pipe->head - 1;
   count -= av_size;
-  (uint8_t*)buf += av_size;
+  buf8 += av_size;
   if(av_size2 >= count){
-    memcpy( &pipe->buffer[pipe->head], buf, count );
+    memcpy( &pipe->buffer[pipe->head], buf8, count );
     __sync_add_and_fetch( &pipe->head, count);
     return count+av_size;
   }else{
-    memcpy( &pipe->buffer[pipe->head], buf, av_size2 );
+    memcpy( &pipe->buffer[pipe->head], buf8, av_size2 );
     __sync_add_and_fetch( &pipe->head, av_size2);
     return av_size2+av_size;
   }
@@ -202,11 +205,15 @@ unsigned long mppipe_write(mppipe_w wr, void *buf, size_t count){
 
 
 char mppipe_close_write(mppipe_w *wr){
-  //освобождаем память только в дескрипторе записи. Особой разницы нет, главное не дублировать
-  free(wr->fifo);
+  if(((struct sProgramPipe*)wr->fifo)->flag_close == 2)free(wr->fifo);
+    else ((struct sProgramPipe*)wr->fifo)->flag_close = 1;
+  wr = NULL;
   return 0;
 }
 char mppipe_close_read(mppipe_r *rd){
+  if(((struct sProgramPipe*)rd->fifo)->flag_close == 1)free(rd->fifo);
+    else ((struct sProgramPipe*)rd->fifo)->flag_close = 2;
+  rd = NULL;
   return 0;
 }
 
